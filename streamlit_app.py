@@ -77,6 +77,7 @@ if "getLocation()" not in st.session_state:
     st.session_state["getLocation()"] = None
 if "UA" not in st.session_state:
     st.session_state["UA"] = None
+u_agent = 'NA'
 
 # %% password has been validated, load and preview data 
 df = load_data()
@@ -117,7 +118,8 @@ if not initials:
     st.warning("Initials are blank.  Please enter your initials (or 'test') above.")
     form_submit = False
 else:
-    with st.form("thing_form", clear_on_submit=True):
+    # with st.form("thing_form", clear_on_submit=True):
+    with st.form("thing_form", clear_on_submit=False):
         # header = st.columns([2,2])
         # header[0].subheader(st.secrets['thing_type_header'])
         # header[1].subheader(st.secrets['thing_subtype_header'])
@@ -137,9 +139,9 @@ if form_submit:
     # apparently the library puts these results into session state for later retrieval
     # Returns user's location after asking for permission when the user clicks the generated link with the given text
     location = get_geolocation()
-    u_agent = streamlit_js_eval(
-        js_expressions='window.navigator.userAgent', 
-        want_output = True, key = 'UA')
+    # u_agent = streamlit_js_eval(
+    #     js_expressions='window.navigator.userAgent', 
+    #     want_output = True, key = 'UA')
     
 if st.session_state['getLocation()'] is not None:  # This came from the JS call above
     location = st.session_state['getLocation()']
@@ -152,11 +154,12 @@ if st.session_state['getLocation()'] is not None:  # This came from the JS call 
     id_string = str(uuid.uuid4())
     st.session_state['getLocation()'] = None
         
-    if st.session_state['UA'] is not None:  # This came from the js call above
-        u_agent = st.session_state['UA']
-        st.session_state['UA'] = None
-    else:
-        u_agent = None
+    # if st.session_state['UA'] is not None:  # This came from the js call above
+    #     u_agent = st.session_state['UA']
+    #     st.session_state['UA'] = None
+    # else:
+    #     u_agent = None
+    # u_agent = "NA"
 
     newrow_dict = {'ID':id_string, 
                     THING_NAME:thing_type, 'type':thing_subtype,
@@ -165,6 +168,9 @@ if st.session_state['getLocation()'] is not None:  # This came from the JS call 
                     'username':initials, 'u_agent':u_agent}
     # st.write(f'{newrow_dict=}')
     st.session_state['newrow'] = newrow_dict
+    # attempt to sanitize state
+    location, lat, lon, geoloc, timestamp, dt, dts, id_string = (
+        None, 0, 0, None, 0, None, None, str(uuid.uuid4()))
     newrow_dict = {}
 
 
@@ -278,9 +284,11 @@ thing_map
 # %% Charts
 
 st.write(f'#### {THING_NAME.title()} counts')
-df_counts = df.groupby(by=THING_NAME).count()
+df_counts = df[[THING_NAME, 'type']].copy()
+df_counts = df_counts.groupby(by=THING_NAME).count()
 df_counts.reset_index(inplace=True)
-df_counts.rename(columns={'ID':'count'}, inplace=True)
+df_counts.rename(columns={'type':'count'}, inplace=True)
+
 df_counts['color'] = df_counts.apply(lambda row: 
                                        color_lookup.get(row[THING_NAME]),
                                        axis=1)
@@ -289,6 +297,6 @@ df_counts['hexcolor'] = df_counts['color'].apply(lambda r: rgb_to_hex(*r))
 # st.write(df_counts)
 st.write(alt.Chart(df_counts).mark_bar().encode(
     x=alt.X(THING_NAME+":N", sort='-y'),
-    y='count',
+    y='count:Q',
     color=alt.Color(field='hexcolor', type='nominal', scale=None)
 ))
