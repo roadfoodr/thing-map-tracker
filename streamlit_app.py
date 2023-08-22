@@ -42,13 +42,14 @@ THING_NAME = st.secrets['thing_name']
 # %% LOAD DATA ONCE
 @st.cache_data
 def load_data(table_name=TABLE_NAME):    
-    df = wr.dynamodb.read_items(table_name=table_name, allow_full_scan=True)
+    df = wr.dynamodb.read_items(table_name=table_name, as_dataframe=True,
+                                max_items_evaluated=5000)
     colnames = ['ID', THING_NAME, 'type', 'create_time', 'username',
                 'lat', 'lon', 'geohash', 'timestamp', 'u_agent']
     df = df[colnames]
     # df['timestamp'] = pd.to_numeric(df['timestamp'])
     df.sort_values(by='timestamp', ascending=True, inplace=True)
-    
+    df.reset_index(drop=True, inplace=True)
     return df
 
 # %%  STREAMLIT APP LAYOUT
@@ -135,19 +136,17 @@ if form_submit:
     u_agent = streamlit_js_eval(
         js_expressions='window.navigator.userAgent', 
         want_output = True, key = 'UA')
-    if not initials:
-        st.toast("Input accepted, but don't forget to enter your initials")
     
 if st.session_state['getLocation()'] is not None:  # This came from the JS call above
     location = st.session_state['getLocation()']
     lat, lon = location['coords']['latitude'], location['coords']['longitude']
     geoloc = geohash.encode(lat, lon, precision=8)
-    geoloc_decode = geohash.decode(geoloc)
+    # geoloc_decode = geohash.decode(geoloc)
 
     timestamp = location['timestamp']
     dt = datetime.datetime.fromtimestamp(int(timestamp)/1000)
     dts = dt.strftime('%a, %d %b %Y %H:%M:%S %z')
-    id_string = f'{geoloc}|{str(timestamp)[-4:]}'
+    id_string = f'{geoloc}|{str(timestamp)[-4:]}'  # last 4 digits for uniqueness
     st.session_state['getLocation()'] = None
         
     if st.session_state['UA'] is not None:  # This came from the js call above
@@ -163,6 +162,7 @@ if st.session_state['getLocation()'] is not None:  # This came from the JS call 
                     'username':initials, 'u_agent':u_agent}
     # st.write(f'{newrow_dict=}')
     st.session_state['newrow'] = newrow_dict
+    newrow_dict = {}
 
 
 if st.session_state['newrow'] is not None:
@@ -173,17 +173,18 @@ if st.session_state['newrow'] is not None:
     item = st.session_state['newrow']
     # st.write(item)
     wr.dynamodb.put_items(items=[item], table_name=TABLE_NAME)
-
     
     st.toast(f"Added {THING_NAME}: {thing_type}, {thing_subtype}")
     # also update local state
-    newrow_df = pd.DataFrame([newrow_dict])
+    newrow_df = pd.DataFrame([item])
     st.session_state['df'] = pd.concat([st.session_state['df'],
                                         newrow_df], 
                                         ignore_index=True)
 
     st.session_state['oldrow'] = st.session_state['newrow']
     st.session_state['newrow'] = None
+    item = None
+
 
 # Option to undo the last row added in this session - add button here
 if st.session_state['oldrow'] is not None:
@@ -202,9 +203,14 @@ st.write(f"##### Map: {THING_NAME} locations")
 
 # st.map(data=st.session_state['df'], zoom=9)
 
-df_mapcols = st.session_state['df'][['lat', 'lon', 'sign', 'type', 'geohash']].copy()
+mapcols = ['ID', 'lat', 'lon', 'sign', 'type', 'geohash']
+df_mapcols = st.session_state['df'][mapcols].copy()
 df_mapcols[['lat', 'lon']] = df_mapcols[['lat', 'lon']].apply(
     pd.to_numeric, errors='coerce')
+
+
+# st.map(data=df_mapcols, zoom=9)
+
 
 # For quick testing: assign a color based on THING_NAME
 color_lookup = pdk.data_utils.assign_random_colors(df_mapcols[THING_NAME])
@@ -248,7 +254,9 @@ def construct_thing_map(map_style):
             zoom=9,
             # pitch=50,
             ),
-        tooltip={"html": "<center><strong>{sign}</strong><br>{type}</center>"},
+        tooltip={"html": "<center><strong>{"+
+                 THING_NAME+"}</strong><br>{type}<br>{ID}"+
+                 "<br>{lat} | {lon}"},
         # tooltip={"html": "<strong>TOOLTIIP</strong>"},
         # tooltip=True,
         )
