@@ -18,6 +18,10 @@ CalcColors = ['#2f78b3', # 47, 120, 179  Blue
 def hex_to_rgb(hex):
   return [int(hex[i:i+2], 16) for i in (0, 2, 4)]
 
+def rgb_to_hex(red, green, blue, alpha):
+    """Return color as #rrggbb for the given color values."""
+    return '#%02x%02x%02x' % (red, green, blue)
+
 
 
 def check_password():

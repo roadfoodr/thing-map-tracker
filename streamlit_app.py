@@ -23,6 +23,8 @@ import geohash  # docs: https://github.com/vinsci/geohash/
 import datetime
 import pydeck as pdk
 import altair as alt
+import ast
+from streamlit_utilities import rgb_to_hex as rgb_to_hex
 
 TABLE_NAME = st.secrets['table_name']
 THING_NAME = st.secrets['thing_name']
@@ -33,11 +35,11 @@ THING_NAME = st.secrets['thing_name']
 # TODO: "undo" last action (button visible if there is a last_row in state)
 # TODO: confirm distance / duplicate thing before adding
 # TODO: filter dataset by thing type (checkboxes for pairs?)
+# TODO: geohash region containing thing "a" but not thing "b"
 # TODO: different thing sizes may require 2 separate layers
 # TODO: geomerge to flag with District label
 # TODO: compute/wrangle color/size based on mapping from type
 # TODO: timezones from timestamp are different on desktop vs mobile
-# TODO: bar graph counting different things
 # TODO: compute map center, bounds from data points
 #       see https://deckgl.readthedocs.io/en/latest/data_utils.html#pydeck.data_utils.viewport_helpers.compute_view
 
@@ -46,8 +48,8 @@ THING_NAME = st.secrets['thing_name']
 def load_data(table_name=TABLE_NAME):    
     df = wr.dynamodb.read_items(table_name=table_name, as_dataframe=True,
                                 max_items_evaluated=5000)
-    colnames = ['ID', THING_NAME, 'type', 'create_time', 'username',
-                'lat', 'lon', 'geohash', 'timestamp', 'u_agent']
+    colnames = [THING_NAME, 'type', 'create_time', 'username',
+                'lat', 'lon', 'geohash', 'ID', 'timestamp', 'u_agent']
     df = df[colnames]
     # df['timestamp'] = pd.to_numeric(df['timestamp'])
     df.sort_values(by='timestamp', ascending=True, inplace=True)
@@ -200,9 +202,6 @@ if st.session_state['oldrow'] is not None:
 
 
 # %% display map
-st.write(f"##### Map: {THING_NAME} locations")
-
-# st.map(data=st.session_state['df'], zoom=9)
 
 mapcols = [THING_NAME, 'type', 'lat', 'lon', 'geohash', 'ID']
 df_mapcols = st.session_state['df'][mapcols].copy()
@@ -211,23 +210,29 @@ df_mapcols[['lat', 'lon']] = df_mapcols[['lat', 'lon']].apply(
 
 # st.map(data=df_mapcols, zoom=9)
 
-
-if 'thing_colormap' in st.secrets:
-    st.write("colormap found!")
+if 'thing_colors' in st.secrets:
+    # convert string representation to tuples
+    thing_colors = [ast.literal_eval(item) for item in st.secrets['thing_colors']]
+    color_lookup = dict(zip(st.secrets['thing_types'], thing_colors))
 else:
     # For quick testing: assign a mapping of colors based on THING_NAME
     color_lookup = pdk.data_utils.assign_random_colors(df_mapcols[THING_NAME])
-    df_mapcols['color'] = df_mapcols.apply(lambda row: 
-                                           color_lookup.get(row[THING_NAME]),
-                                           axis=1)
+df_mapcols['color'] = df_mapcols.apply(lambda row: 
+                                       color_lookup.get(row[THING_NAME]),
+                                       axis=1)
 st.write('##### Recent entries')
 st.write(df_mapcols.tail(5))
+
 
 map_style_options = { 'mapbox://styles/mapbox/streets-v12': 'Street map', 
                       None: 'Light background',
                       }
-map_style = st.radio('Map tiles', map_style_options.keys(),
-                        format_func=lambda x: map_style_options[x])
+map_title_area, tile_control_area = st.columns([3,1])
+with map_title_area:
+    st.write(f"##### Map: {THING_NAME} locations")
+with tile_control_area:
+    map_style = st.radio('Map tiles', map_style_options.keys(),
+                            format_func=lambda x: map_style_options[x])
 
 # we do not want to cache this
 # @st.cache_resource
@@ -276,8 +281,14 @@ st.write(f'#### {THING_NAME.title()} counts')
 df_counts = df.groupby(by=THING_NAME).count()
 df_counts.reset_index(inplace=True)
 df_counts.rename(columns={'ID':'count'}, inplace=True)
+df_counts['color'] = df_counts.apply(lambda row: 
+                                       color_lookup.get(row[THING_NAME]),
+                                       axis=1)
+df_counts['hexcolor'] = df_counts['color'].apply(lambda r: rgb_to_hex(*r))
+
 # st.write(df_counts)
 st.write(alt.Chart(df_counts).mark_bar().encode(
     x=alt.X(THING_NAME+":N", sort='-y'),
     y='count',
+    color=alt.Color(field='hexcolor', type='nominal', scale=None)
 ))
