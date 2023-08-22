@@ -14,6 +14,7 @@ from streamlit_js_eval import streamlit_js_eval, get_geolocation
 import boto3
 # from boto3.dynamodb.conditions import Key, Attr
 import awswrangler as wr
+import uuid
 import geohash  # docs: https://github.com/vinsci/geohash/
 #                 also: https://docs.quadrant.io/quadrant-geohash-algorithm
 #            and maybe: https://www.pluralsight.com/resources/blog/cloud/location-based-search-results-with-dynamodb-and-geohash
@@ -21,6 +22,7 @@ import geohash  # docs: https://github.com/vinsci/geohash/
 # import random
 import datetime
 import pydeck as pdk
+import altair as alt
 
 TABLE_NAME = st.secrets['table_name']
 THING_NAME = st.secrets['thing_name']
@@ -117,7 +119,7 @@ else:
         # header = st.columns([2,2])
         # header[0].subheader(st.secrets['thing_type_header'])
         # header[1].subheader(st.secrets['thing_subtype_header'])
-    
+        st.write(f'##### Create {THING_NAME} at current location')
         row1 = st.columns([2,2])
         thing_type = row1[0].radio(st.secrets['thing_type_header'],
                                    st.secrets['thing_types'],
@@ -126,7 +128,7 @@ else:
                                       st.secrets['thing_subtypes'],
                                       label_visibility='visible')
     
-        form_submit = st.form_submit_button('Submit')
+        form_submit = st.form_submit_button(f'Add {THING_NAME}')
     
 
 if form_submit:
@@ -141,12 +143,11 @@ if st.session_state['getLocation()'] is not None:  # This came from the JS call 
     location = st.session_state['getLocation()']
     lat, lon = location['coords']['latitude'], location['coords']['longitude']
     geoloc = geohash.encode(lat, lon, precision=8)
-    # geoloc_decode = geohash.decode(geoloc)
 
     timestamp = location['timestamp']
     dt = datetime.datetime.fromtimestamp(int(timestamp)/1000)
     dts = dt.strftime('%a, %d %b %Y %H:%M:%S %z')
-    id_string = f'{geoloc}|{str(timestamp)[-4:]}'  # last 4 digits for uniqueness
+    id_string = str(uuid.uuid4())
     st.session_state['getLocation()'] = None
         
     if st.session_state['UA'] is not None:  # This came from the js call above
@@ -203,21 +204,24 @@ st.write(f"##### Map: {THING_NAME} locations")
 
 # st.map(data=st.session_state['df'], zoom=9)
 
-mapcols = ['ID', 'lat', 'lon', 'sign', 'type', 'geohash']
+mapcols = [THING_NAME, 'type', 'lat', 'lon', 'geohash', 'ID']
 df_mapcols = st.session_state['df'][mapcols].copy()
 df_mapcols[['lat', 'lon']] = df_mapcols[['lat', 'lon']].apply(
     pd.to_numeric, errors='coerce')
 
-
 # st.map(data=df_mapcols, zoom=9)
 
 
-# For quick testing: assign a color based on THING_NAME
-color_lookup = pdk.data_utils.assign_random_colors(df_mapcols[THING_NAME])
-df_mapcols['color'] = df_mapcols.apply(lambda row: 
-                                       color_lookup.get(row[THING_NAME]),
-                                       axis=1)
-st.write(df_mapcols.head(10))
+if 'thing_colormap' in st.secrets:
+    st.write("colormap found!")
+else:
+    # For quick testing: assign a mapping of colors based on THING_NAME
+    color_lookup = pdk.data_utils.assign_random_colors(df_mapcols[THING_NAME])
+    df_mapcols['color'] = df_mapcols.apply(lambda row: 
+                                           color_lookup.get(row[THING_NAME]),
+                                           axis=1)
+st.write('##### Recent entries')
+st.write(df_mapcols.tail(5))
 
 map_style_options = { 'mapbox://styles/mapbox/streets-v12': 'Street map', 
                       None: 'Light background',
@@ -265,3 +269,15 @@ def construct_thing_map(map_style):
 thing_map = construct_thing_map(map_style)
 # st.pydeck_chart(thing_map)  # tooltips only work if you display the object directly
 thing_map
+
+# %% Charts
+
+st.write(f'#### {THING_NAME.title()} counts')
+df_counts = df.groupby(by=THING_NAME).count()
+df_counts.reset_index(inplace=True)
+df_counts.rename(columns={'ID':'count'}, inplace=True)
+# st.write(df_counts)
+st.write(alt.Chart(df_counts).mark_bar().encode(
+    x=alt.X(THING_NAME+":N", sort='-y'),
+    y='count',
+))
