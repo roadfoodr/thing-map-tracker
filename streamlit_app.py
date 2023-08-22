@@ -6,7 +6,7 @@ Created on Wed May 24 02:35:20 2023
 """
 
 import pandas as pd
-import numpy as np
+# import numpy as np
 import streamlit as st
 from streamlit_utilities import check_password as check_password
 from streamlit_js_eval import streamlit_js_eval, get_geolocation
@@ -27,17 +27,17 @@ THING_NAME = st.secrets['thing_name']
 
 # %% TODOs
 
-# TODO: specify tracked type/subtype from config file, also table name
-#                    (actually specify config options via another table name)
 # TODO: admin password (delete option)  vs read password
 # TODO: "undo" last action (button visible if there is a last_row in state)
 # TODO: confirm distance / duplicate thing before adding
-# TODO: count things of given type within distance, delete them
 # TODO: filter dataset by thing type (checkboxes for pairs?)
-# TODO: thing sizes may require 2 separate layers
-# TODO: add hover tooltip for thing
+# TODO: different thing sizes may require 2 separate layers
 # TODO: geomerge to flag with District label
 # TODO: compute/wrangle color/size based on mapping from type
+# TODO: timezones from timestamp are different on desktop vs mobile
+# TODO: bar graph counting different things
+# TODO: compute map center, bounds from data points
+#       see https://deckgl.readthedocs.io/en/latest/data_utils.html#pydeck.data_utils.viewport_helpers.compute_view
 
 # %% LOAD DATA ONCE
 @st.cache_data
@@ -61,8 +61,8 @@ map_style = 'mapbox://styles/mapbox/streets-v12'
 boto3.setup_default_session(region_name="us-east-2")
 
 if not check_password():
-    # st.stop()
-    pass
+    st.stop()
+    # pass
 
 if "newrow" not in st.session_state:
     st.session_state["newrow"] = None
@@ -78,12 +78,23 @@ df = load_data()
 if "df" not in st.session_state:
     st.session_state["df"] = df
     
-sample_area, refresh_area = st.columns([7,1])
+sample_area, refresh_area = st.columns([5,1])
 with sample_area:
     st.write("##### Sample of data")
+
+# st.write(st.session_state)
 with refresh_area:
-    if st.button('Refresh'):
+    if st.button('Refresh all'):
+        # Delete all the items in Session state
+        for key in st.session_state.keys():
+            if key not in ["password_correct", "initials_text_input"]:
+                del st.session_state[key]
+        # hack to prevent this internal field from being cleared along with cache
+        initials_text_input_save = ''
+        if "initials_text_input" in st.session_state.keys():
+            initials_text_input_save = st.session_state['initials_text_input']
         st.cache_data.clear()
+        st.session_state['initials_text_input'] = initials_text_input_save
         st.experimental_rerun()
 
 st.dataframe(df.tail(5))
@@ -95,7 +106,7 @@ title_area, initials_area = st.columns([7,1])
 with title_area:
     st.write(f"## {st.secrets['app_title']}")
 with initials_area:
-    initials = st.text_input('Your initials', '', max_chars=5)
+    initials = st.text_input('Your initials', '', max_chars=5, key="initials_text_input")
 
 if not initials:
     st.warning("Initials are blank.  Please enter your initials (or 'test') above.")
@@ -195,6 +206,11 @@ df_mapcols = st.session_state['df'][['lat', 'lon', 'sign', 'type', 'geohash']].c
 df_mapcols[['lat', 'lon']] = df_mapcols[['lat', 'lon']].apply(
     pd.to_numeric, errors='coerce')
 
+# For quick testing: assign a color based on THING_NAME
+color_lookup = pdk.data_utils.assign_random_colors(df_mapcols[THING_NAME])
+df_mapcols['color'] = df_mapcols.apply(lambda row: 
+                                       color_lookup.get(row[THING_NAME]),
+                                       axis=1)
 st.write(df_mapcols.head(10))
 
 map_style_options = { 'mapbox://styles/mapbox/streets-v12': 'Street map', 
@@ -216,9 +232,9 @@ def construct_thing_map(map_style):
                 pickable=True,
                 data=df_mapcols,
                 get_position='[lon, lat]',
-                get_fill_color='[222, 44, 0, 88]',
-                get_line_color='[200, 30, 0, 99]',
-                # get_color='color',
+                # get_fill_color='[222, 44, 0, 88]',
+                # get_line_color='[200, 30, 0, 99]',
+                get_color='color',
                 # get_radius='size', # this should work https://pydeck.gl/gallery/scatterplot_layer.html
                 get_radius=33,
                 radius_min_pixels=3.5,  # https://pydeck.gl/gallery/scatterplot_layer.html
