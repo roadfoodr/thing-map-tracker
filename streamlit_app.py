@@ -19,12 +19,13 @@ import geohash  # docs: https://github.com/vinsci/geohash/
 #                 also: https://docs.quadrant.io/quadrant-geohash-algorithm
 #            and maybe: https://www.pluralsight.com/resources/blog/cloud/location-based-search-results-with-dynamodb-and-geohash
 
-# import random
 import datetime
 import pydeck as pdk
 import altair as alt
 import ast
 from streamlit_utilities import rgb_to_hex as rgb_to_hex
+
+boto3.setup_default_session(region_name="us-east-2")
 
 TABLE_NAME = st.secrets['table_name']
 THING_NAME = st.secrets['thing_name']
@@ -34,7 +35,6 @@ THING_NAME = st.secrets['thing_name']
 # TODO: admin password (delete option)  vs read password
 # TODO: "undo" last action (button visible if there is a last_row in state)
 # TODO: confirm distance / duplicate thing before adding
-# TODO: filter dataset by thing type (checkboxes for pairs?)
 # TODO: geohash region containing thing "a" but not thing "b"
 # TODO: different thing sizes may require 2 separate layers
 # TODO: geomerge to flag with District label
@@ -44,6 +44,7 @@ THING_NAME = st.secrets['thing_name']
 #       see https://deckgl.readthedocs.io/en/latest/data_utils.html#pydeck.data_utils.viewport_helpers.compute_view
 
 # %% LOAD DATA ONCE
+# TODO: may not want to cache this since this is being handled in session state
 @st.cache_data
 def load_data(table_name=TABLE_NAME):    
     df = wr.dynamodb.read_items(table_name=table_name, as_dataframe=True,
@@ -62,9 +63,6 @@ st.set_page_config(
     page_icon=":ballot_box_with_ballot:",
     page_title=st.secrets['page_title'] )
 
-map_style = 'mapbox://styles/mapbox/streets-v12'
-boto3.setup_default_session(region_name="us-east-2")
-
 if not check_password():
     st.stop()
     # pass
@@ -79,16 +77,12 @@ if "UA" not in st.session_state:
     st.session_state["UA"] = None
 u_agent = 'NA'
 
-# %% password has been validated, load and preview data 
-df = load_data()
-if "df" not in st.session_state:
-    st.session_state["df"] = df
-    
-sample_area, refresh_area = st.columns([5,1])
-with sample_area:
-    st.write("##### Sample of data")
+# %% App title and refresh control
 
-# st.write(st.session_state)
+st.write(f"## {st.secrets['app_title']}")
+st.write("##### _BETA version - data may be cleared periodically_")
+
+buf, refresh_area = st.columns([5,1])
 with refresh_area:
     if st.button('Refresh all'):
         # Delete all the items in Session state
@@ -101,39 +95,43 @@ with refresh_area:
             initials_text_input_save = st.session_state['initials_text_input']
         st.cache_data.clear()
         st.session_state['initials_text_input'] = initials_text_input_save
+        st.session_state['filter_control'] = 'All'
         st.experimental_rerun()
 
-st.dataframe(df.tail(5))
-# st.write(df.dtypes)
+# %% password has been validated, load and preview data 
+if "df" not in st.session_state:
+    st.session_state['df'] = load_data()
+
+entries_area = st.empty()
+with entries_area.expander('Recent entries', expanded=True):
+    st.write((st.session_state['df'].tail(5)))
 
 # %% form
 
-title_area, initials_area = st.columns([7,1])
-with title_area:
-    st.write(f"## {st.secrets['app_title']}")
+buf, initials_area = st.columns([5,1])
 with initials_area:
-    initials = st.text_input('Your initials', '', max_chars=5, key="initials_text_input")
+    initials = st.text_input('Your initials', '', max_chars=10, key="initials_text_input")
 
 if not initials:
     st.warning("Initials are blank.  Please enter your initials (or 'test') above.")
     form_submit = False
 else:
-    # with st.form("thing_form", clear_on_submit=True):
     with st.form("thing_form", clear_on_submit=False):
         # header = st.columns([2,2])
         # header[0].subheader(st.secrets['thing_type_header'])
         # header[1].subheader(st.secrets['thing_subtype_header'])
         st.write(f'##### Create {THING_NAME} at current location')
-        row1 = st.columns([2,2])
-        thing_type = row1[0].radio(st.secrets['thing_type_header'],
+        form_cols = st.columns(2)
+        thing_type = form_cols[0].radio(st.secrets['thing_type_header'],
                                    st.secrets['thing_types'],
                                    label_visibility='visible')
-        thing_subtype = row1[1].radio(st.secrets['thing_subtype_header'],
+        thing_subtype = form_cols[1].radio(st.secrets['thing_subtype_header'],
                                       st.secrets['thing_subtypes'],
                                       label_visibility='visible')
     
         form_submit = st.form_submit_button(f'Add {THING_NAME}')
     
+# %% form handling
 
 if form_submit:
     # apparently the library puts these results into session state for later retrieval
@@ -170,7 +168,7 @@ if st.session_state['getLocation()'] is not None:  # This came from the JS call 
     st.session_state['newrow'] = newrow_dict
     # attempt to sanitize state
     location, lat, lon, geoloc, timestamp, dt, dts, id_string = (
-        None, 0, 0, None, 0, None, None, str(uuid.uuid4()))
+        None, 0, 0, None, 0, None, None, '')
     newrow_dict = {}
 
 
@@ -178,17 +176,18 @@ if st.session_state['newrow'] is not None:
     # Write to DB
     # Does not seem to be a way to check success?
     # https://aws-sdk-pandas.readthedocs.io/en/stable/stubs/awswrangler.dynamodb.put_items.html
-    
     item = st.session_state['newrow']
     # st.write(item)
     wr.dynamodb.put_items(items=[item], table_name=TABLE_NAME)
-    
     st.toast(f"Added {THING_NAME}: {thing_type}, {thing_subtype}")
+    
     # also update local state
     newrow_df = pd.DataFrame([item])
     st.session_state['df'] = pd.concat([st.session_state['df'],
                                         newrow_df], 
                                         ignore_index=True)
+    with entries_area.expander('Recent entries', expanded=True):
+        st.write((st.session_state['df'].tail(5)))
 
     st.session_state['oldrow'] = st.session_state['newrow']
     st.session_state['newrow'] = None
@@ -198,19 +197,40 @@ if st.session_state['newrow'] is not None:
 # Option to undo the last row added in this session - add button here
 if st.session_state['oldrow'] is not None:
     oldrow_dict = st.session_state['oldrow']
-    buf, undo_area = st.columns([3,2])
-    with undo_area:
-        st.write(f"_last added: {oldrow_dict[THING_NAME]}, "
-                 f"{oldrow_dict['type']}_")
+    st.write(f"_last added: {oldrow_dict[THING_NAME]}, "
+             f"{oldrow_dict['type']}_")
 
 # st.write(st.session_state['df'])
 # st.write(st.session_state)
 
 
-# %% display map
+# %% display map controls
+map_style_options = { 'mapbox://styles/mapbox/streets-v12': 'Street map', 
+                      None: 'Light background',
+                      }
+map_title_area, filter_control_area, tile_control_area = st.columns([2, 1, 1])
+with map_title_area:
+    st.write(f"##### Map: {THING_NAME} locations")
+with filter_control_area:
+    filter_selection = st.selectbox(
+            'Filter by:',
+            ['All'] + st.secrets['thing_types'],
+            key='filter_control'
+            )
+with tile_control_area:
+    map_style = st.radio('Map tiles', map_style_options.keys(),
+                            format_func=lambda x: map_style_options[x])
 
+
+# %% filter df per controls
+df_filtered = st.session_state['df']
+df_filtered = (df_filtered if filter_selection == 'All'
+               else df_filtered[df_filtered[THING_NAME] == filter_selection].copy()
+               )
+
+# %% wrangle color (and eventually size) field
 mapcols = [THING_NAME, 'type', 'lat', 'lon', 'geohash', 'ID']
-df_mapcols = st.session_state['df'][mapcols].copy()
+df_mapcols = df_filtered[mapcols].copy()
 df_mapcols[['lat', 'lon']] = df_mapcols[['lat', 'lon']].apply(
     pd.to_numeric, errors='coerce')
 
@@ -226,19 +246,10 @@ else:
 df_mapcols['color'] = df_mapcols.apply(lambda row: 
                                        color_lookup.get(row[THING_NAME]),
                                        axis=1)
-st.write('##### Recent entries')
-st.write(df_mapcols.tail(5))
+# st.write('##### Recent entries')
+# st.write(df_mapcols.tail(5))
 
-
-map_style_options = { 'mapbox://styles/mapbox/streets-v12': 'Street map', 
-                      None: 'Light background',
-                      }
-map_title_area, tile_control_area = st.columns([3,1])
-with map_title_area:
-    st.write(f"##### Map: {THING_NAME} locations")
-with tile_control_area:
-    map_style = st.radio('Map tiles', map_style_options.keys(),
-                            format_func=lambda x: map_style_options[x])
+# %% compute and render the map
 
 # we do not want to cache this
 # @st.cache_resource
@@ -283,8 +294,8 @@ thing_map
 
 # %% Charts
 
-st.write(f'#### {THING_NAME.title()} counts')
-df_counts = df[[THING_NAME, 'type']].copy()
+st.write(f'#### {THING_NAME.title()} counts _(total: {len(df_filtered)})_')
+df_counts = df_filtered[[THING_NAME, 'type']].copy()
 df_counts = df_counts.groupby(by=THING_NAME).count()
 df_counts.reset_index(inplace=True)
 df_counts.rename(columns={'type':'count'}, inplace=True)
