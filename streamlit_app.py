@@ -20,6 +20,7 @@ import geohash  # docs: https://github.com/vinsci/geohash/
 #            and maybe: https://www.pluralsight.com/resources/blog/cloud/location-based-search-results-with-dynamodb-and-geohash
 
 import datetime
+from pytz import timezone
 import pydeck as pdk
 import altair as alt
 import ast
@@ -30,6 +31,7 @@ boto3.setup_default_session(region_name="us-east-2")
 
 TABLE_NAME = st.secrets['table_name']
 THING_NAME = st.secrets['thing_name']
+EST = timezone('US/Eastern')
 
 # %% TODOs
 
@@ -40,7 +42,6 @@ THING_NAME = st.secrets['thing_name']
 # TODO: different thing sizes may require 2 separate layers
 # TODO: geomerge to flag with District label
 # TODO: compute/wrangle color/size based on mapping from type
-# TODO: timezones from timestamp are different on desktop vs mobile
 # TODO: compute map center, bounds from data points
 #       see https://deckgl.readthedocs.io/en/latest/data_utils.html#pydeck.data_utils.viewport_helpers.compute_view
 
@@ -92,7 +93,7 @@ st.set_page_config(
 if "password_correct" not in st.session_state:
     clear_session_cache()
     clear_location_info()
-    st.toast('App restart,clearing cache')
+    st.toast('App restart, clearing cache')
     
 if not check_password():
     st.stop()
@@ -157,22 +158,25 @@ last_added_area = st.empty()
 if form_submit:
     # ensure that state is cleared before attempting a new request
     clear_location_info()
-    # apparently the library puts these results into session state for later retrieval
     # Returns user's location after asking for permission when the user clicks the generated link with the given text
+    # apparently the library puts these results into session state for later retrieval
     location = get_geolocation()
     # u_agent = streamlit_js_eval(
     #     js_expressions='window.navigator.userAgent', 
     #     want_output = True, key = 'UA')
     
 # %% location request has returned data and added it to session state
+
 if st.session_state['getLocation()'] is not None:  # This came from the JS call above
     location = st.session_state['getLocation()']
     lat, lon = location['coords']['latitude'], location['coords']['longitude']
     geoloc = geohash.encode(lat, lon, precision=8)
 
     timestamp = location['timestamp']
-    dt = datetime.datetime.fromtimestamp(int(timestamp)/1000)
-    dts = dt.strftime('%a, %d %b %Y %H:%M:%S %z')
+    dt_object_utc = datetime.datetime.utcfromtimestamp(int(timestamp)/1000)
+    dt_object_edt = dt_object_utc.astimezone(EST)
+    dts = dt_object_edt.strftime('%a, %d %b %Y %H:%M:%S %z')
+
     id_string = str(uuid.uuid4())
     st.session_state['getLocation()'] = None
         
@@ -226,7 +230,6 @@ if st.session_state['oldrow'] is not None:
 
 # st.write(st.session_state['df'])
 # st.write(st.session_state)
-
 
 # %% display map controls
 map_style_options = { 'mapbox://styles/mapbox/streets-v12': 'Street map', 
