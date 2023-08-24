@@ -57,6 +57,16 @@ def load_data(table_name=TABLE_NAME):
     df.reset_index(drop=True, inplace=True)
     return df
 
+# %% utility
+def clear_location_info():
+    if 'getLocation()' in st.session_state.keys():
+            del st.session_state['getLocation()']
+            
+    location, lat, lon, geoloc, timestamp, dt, dts, id_string = (
+        None, 0, 0, None, 0, None, None, '')
+    newrow_dict = {}
+    return True
+
 # %%  STREAMLIT APP LAYOUT
 st.set_page_config(
     layout="centered",       # alternative option: 'wide'
@@ -67,8 +77,6 @@ if not check_password():
     st.stop()
     # pass
 
-if "newrow" not in st.session_state:
-    st.session_state["newrow"] = None
 if "oldrow" not in st.session_state:
     st.session_state["oldrow"] = None
 if "getLocation()" not in st.session_state:
@@ -104,7 +112,7 @@ if "df" not in st.session_state:
 
 entries_area = st.empty()
 with entries_area.expander('Recent entries', expanded=True):
-    st.write((st.session_state['df'].tail(5)))
+    st.write(st.session_state['df'].tail(5))
 
 # %% form
 
@@ -120,7 +128,7 @@ else:
         # header = st.columns([2,2])
         # header[0].subheader(st.secrets['thing_type_header'])
         # header[1].subheader(st.secrets['thing_subtype_header'])
-        st.write(f'##### Create {THING_NAME} at current location')
+        st.write('##### Create entry at current location')
         form_cols = st.columns(2)
         thing_type = form_cols[0].radio(st.secrets['thing_type_header'],
                                    st.secrets['thing_types'],
@@ -132,8 +140,9 @@ else:
         form_submit = st.form_submit_button(f'Add {THING_NAME}')
     
 # %% form handling
-
 if form_submit:
+    # ensure that state is cleared before attempting a new request
+    clear_location_info()
     # apparently the library puts these results into session state for later retrieval
     # Returns user's location after asking for permission when the user clicks the generated link with the given text
     location = get_geolocation()
@@ -141,6 +150,7 @@ if form_submit:
     #     js_expressions='window.navigator.userAgent', 
     #     want_output = True, key = 'UA')
     
+# %% location request has returned data and added it to session state
 if st.session_state['getLocation()'] is not None:  # This came from the JS call above
     location = st.session_state['getLocation()']
     lat, lon = location['coords']['latitude'], location['coords']['longitude']
@@ -165,33 +175,23 @@ if st.session_state['getLocation()'] is not None:  # This came from the JS call 
                     'create_time':dts, 'timestamp':timestamp,
                     'username':initials, 'u_agent':u_agent}
     # st.write(f'{newrow_dict=}')
-    st.session_state['newrow'] = newrow_dict
-    # attempt to sanitize state
-    location, lat, lon, geoloc, timestamp, dt, dts, id_string = (
-        None, 0, 0, None, 0, None, None, '')
-    newrow_dict = {}
 
-
-if st.session_state['newrow'] is not None:
     # Write to DB
     # Does not seem to be a way to check success?
     # https://aws-sdk-pandas.readthedocs.io/en/stable/stubs/awswrangler.dynamodb.put_items.html
-    item = st.session_state['newrow']
-    # st.write(item)
-    wr.dynamodb.put_items(items=[item], table_name=TABLE_NAME)
+    wr.dynamodb.put_items(items=[newrow_dict], table_name=TABLE_NAME)
     st.toast(f"Added {THING_NAME}: {thing_type}, {thing_subtype}")
     
     # also update local state
-    newrow_df = pd.DataFrame([item])
     st.session_state['df'] = pd.concat([st.session_state['df'],
-                                        newrow_df], 
+                                        pd.DataFrame([newrow_dict])], 
                                         ignore_index=True)
     with entries_area.expander('Recent entries', expanded=True):
-        st.write((st.session_state['df'].tail(5)))
+        st.write(st.session_state['df'].tail(5))
 
-    st.session_state['oldrow'] = st.session_state['newrow']
-    st.session_state['newrow'] = None
-    item = None
+    st.session_state['oldrow'] = newrow_dict
+    # attempt to sanitize state
+    clear_location_info()
 
 
 # Option to undo the last row added in this session - add button here
