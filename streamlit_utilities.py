@@ -23,7 +23,6 @@ def rgb_to_hex(red, green, blue, alpha):
     return '#%02x%02x%02x' % (red, green, blue)
 
 
-
 def check_password():
     """Returns `True` if the user had the correct password."""
 
@@ -51,3 +50,12 @@ def check_password():
     else:
         # Password correct.
         return True
+
+
+def check_duplicate(df, geoloc, thing_name, thing_type, thing_subtype):
+    df_matches = df[
+        (df['geohash'] == geoloc) &
+        (df[thing_name] == thing_type) &
+        (df['type'] == thing_subtype)
+        ]
+    return (len(df_matches) > 0)

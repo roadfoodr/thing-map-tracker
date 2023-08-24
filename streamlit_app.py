@@ -24,6 +24,7 @@ import pydeck as pdk
 import altair as alt
 import ast
 from streamlit_utilities import rgb_to_hex as rgb_to_hex
+from streamlit_utilities import check_duplicate as check_duplicate
 
 boto3.setup_default_session(region_name="us-east-2")
 
@@ -138,7 +139,10 @@ else:
                                       label_visibility='visible')
     
         form_submit = st.form_submit_button(f'Add {THING_NAME}')
-    
+
+duplicate_warning_area = st.empty()
+last_added_area = st.empty()
+
 # %% form handling
 if form_submit:
     # ensure that state is cleared before attempting a new request
@@ -175,21 +179,30 @@ if st.session_state['getLocation()'] is not None:  # This came from the JS call 
                     'create_time':dts, 'timestamp':timestamp,
                     'username':initials, 'u_agent':u_agent}
     # st.write(f'{newrow_dict=}')
-
-    # Write to DB
-    # Does not seem to be a way to check success?
-    # https://aws-sdk-pandas.readthedocs.io/en/stable/stubs/awswrangler.dynamodb.put_items.html
-    wr.dynamodb.put_items(items=[newrow_dict], table_name=TABLE_NAME)
-    st.toast(f"Added {THING_NAME}: {thing_type}, {thing_subtype}")
+    if check_duplicate(st.session_state['df'], geoloc, 
+                       THING_NAME, thing_type, thing_subtype):
+        duplicate_warning_text = (f'Entry not added: there is already a '
+                                  f'{THING_NAME} of type {thing_type}, '
+                                  f'{thing_subtype} near this location')
+        with duplicate_warning_area.container():
+            st.error(duplicate_warning_text)
+        st.toast(duplicate_warning_text, icon='❌')
+    else:
+        # Write to DB
+        # Does not seem to be a way to check success?
+        # https://aws-sdk-pandas.readthedocs.io/en/stable/stubs/awswrangler.dynamodb.put_items.html
+        wr.dynamodb.put_items(items=[newrow_dict], table_name=TABLE_NAME)
+        st.toast(f"Added {THING_NAME}: {thing_type}, {thing_subtype}")
+        
+        # also update local state
+        st.session_state['df'] = pd.concat([st.session_state['df'],
+                                            pd.DataFrame([newrow_dict])], 
+                                            ignore_index=True)
+        with entries_area.expander('Recent entries', expanded=True):
+            st.write(st.session_state['df'].tail(5))
     
-    # also update local state
-    st.session_state['df'] = pd.concat([st.session_state['df'],
-                                        pd.DataFrame([newrow_dict])], 
-                                        ignore_index=True)
-    with entries_area.expander('Recent entries', expanded=True):
-        st.write(st.session_state['df'].tail(5))
-
-    st.session_state['oldrow'] = newrow_dict
+        st.session_state['oldrow'] = newrow_dict
+        
     # attempt to sanitize state
     clear_location_info()
 
@@ -197,8 +210,9 @@ if st.session_state['getLocation()'] is not None:  # This came from the JS call 
 # Option to undo the last row added in this session - add button here
 if st.session_state['oldrow'] is not None:
     oldrow_dict = st.session_state['oldrow']
-    st.write(f"_last added: {oldrow_dict[THING_NAME]}, "
-             f"{oldrow_dict['type']}_")
+    with last_added_area.container():
+        st.write(f"_last added: {oldrow_dict[THING_NAME]}, "
+                 f"{oldrow_dict['type']}_")
 
 # st.write(st.session_state['df'])
 # st.write(st.session_state)
