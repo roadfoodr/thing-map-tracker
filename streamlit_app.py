@@ -58,7 +58,7 @@ def load_data(table_name=TABLE_NAME):
     df.reset_index(drop=True, inplace=True)
     return df
 
-# %% utility
+# %% utilities
 def clear_location_info():
     if 'getLocation()' in st.session_state.keys():
             del st.session_state['getLocation()']
@@ -68,12 +68,32 @@ def clear_location_info():
     newrow_dict = {}
     return True
 
+def clear_session_cache():
+    # Delete all the items in Session state
+    for key in st.session_state.keys():
+        if key not in ["password_correct", "initials_text_input"]:
+            del st.session_state[key]
+    # hack to prevent this internal field from being cleared along with cache
+    initials_text_input_save = ''
+    if "initials_text_input" in st.session_state.keys():
+        initials_text_input_save = st.session_state['initials_text_input']
+    st.cache_data.clear()
+    st.session_state['initials_text_input'] = initials_text_input_save
+    st.session_state['filter_control'] = 'All'
+    return True
+
+
 # %%  STREAMLIT APP LAYOUT
 st.set_page_config(
     layout="centered",       # alternative option: 'wide'
     page_icon=":ballot_box_with_ballot:",
     page_title=st.secrets['page_title'] )
 
+if "password_correct" not in st.session_state:
+    clear_session_cache()
+    clear_location_info()
+    st.toast('App restart,clearing cache')
+    
 if not check_password():
     st.stop()
     # pass
@@ -94,17 +114,7 @@ st.write("##### _BETA version - data may be cleared periodically_")
 buf, refresh_area = st.columns([5,1])
 with refresh_area:
     if st.button('Refresh all'):
-        # Delete all the items in Session state
-        for key in st.session_state.keys():
-            if key not in ["password_correct", "initials_text_input"]:
-                del st.session_state[key]
-        # hack to prevent this internal field from being cleared along with cache
-        initials_text_input_save = ''
-        if "initials_text_input" in st.session_state.keys():
-            initials_text_input_save = st.session_state['initials_text_input']
-        st.cache_data.clear()
-        st.session_state['initials_text_input'] = initials_text_input_save
-        st.session_state['filter_control'] = 'All'
+        clear_session_cache()
         st.experimental_rerun()
 
 # %% password has been validated, load and preview data 
